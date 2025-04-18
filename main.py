@@ -6,7 +6,7 @@ import argparse
 from datetime import datetime
 
 # Импортируем модули нашей системы
-from detector import Detector
+from src.detector import Detector
 from actions import ActionManager
 from nlp_processor import CommandProcessor
 from file_manager import FileManager
