@@ -1,186 +1,223 @@
-import unittest
-import os
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+"""
+Тесты для модуля обработки естественно-языковых команд
+"""
 
-from src.nlp_processor import CommandProcessor
+import pytest
+from src.nlp import CommandProcessor
 
-class TestCommandProcessor(unittest.TestCase):
+class TestCommandProcessor:
     """
-    Тесты для класса CommandProcessor
+    Набор тестов для проверки класса CommandProcessor
     """
-    def setUp(self):
-        """
-        Настройка перед каждым тестом
-        """
-        self.processor = CommandProcessor()
     
-    def test_parse_open_command(self):
+    @pytest.fixture
+    def processor(self):
         """
-        Тест разбора команды открытия файла
+        Фикстура для создания экземпляра CommandProcessor
         """
-        command = "открой файл report.txt"
-        result = self.processor.parse_command(command)
-        
-        self.assertEqual(result["action"], "open")
-        self.assertEqual(result["params"].get("file_name"), "report.txt")
+        return CommandProcessor()
     
-    def test_parse_open_app_command(self):
+    def test_parse_click_command(self, processor):
         """
-        Тест разбора команды открытия приложения
+        Тест на распознавание команд клика
         """
-        command = "запусти программу браузер"
-        result = self.processor.parse_command(command)
+        # Тест различных форматов команд клика
+        commands = [
+            "нажми на кнопку Пуск",
+            "кликни на иконку Chrome",
+            "щелкни кнопку Применить",
+            "клик по кнопке Отмена"
+        ]
         
-        self.assertEqual(result["action"], "open")
-        self.assertEqual(result["params"].get("app_name"), "браузер")
+        for cmd in commands:
+            result = processor.parse_command(cmd)
+            assert result is not None
+            assert result["action"] == "click"
+            assert result["target"] is not None
+            assert isinstance(result["params"], dict)
     
-    def test_parse_search_command(self):
+    def test_parse_type_command(self, processor):
         """
-        Тест разбора команды поиска
+        Тест на распознавание команд ввода текста
         """
-        command = "найди папку проекты"
-        result = self.processor.parse_command(command)
+        # Команда с указанием поля ввода
+        cmd = "введи в поле поиска 'Python tutorial'"
+        result = processor.parse_command(cmd)
         
-        self.assertEqual(result["action"], "search")
-        self.assertEqual(result["params"].get("folder_name"), "проекты")
+        assert result is not None
+        assert result["action"] == "type"
+        assert result["target"] == "поле поиска"
+        assert result["params"]["text"] == "Python tutorial"
+        
+        # Команда без указания поля ввода
+        cmd = "напиши 'Hello, world!'"
+        result = processor.parse_command(cmd)
+        
+        assert result is not None
+        assert result["action"] == "type"
+        assert result["target"] is None
+        assert result["params"]["text"] == "Hello, world!"
     
-    def test_parse_click_command(self):
+    def test_parse_open_command(self, processor):
         """
-        Тест разбора команды клика
+        Тест на распознавание команд открытия
         """
-        command = "нажми на кнопку"
-        result = self.processor.parse_command(command)
+        commands = [
+            "открой браузер Chrome",
+            "запусти Блокнот",
+            "активируй программу Word"
+        ]
         
-        self.assertEqual(result["action"], "click")
-        self.assertIn("кнопку", result["target"])
+        for cmd in commands:
+            result = processor.parse_command(cmd)
+            assert result is not None
+            assert result["action"] == "open"
+            assert result["target"] is not None
+            assert isinstance(result["params"], dict)
     
-    def test_parse_click_coordinates_command(self):
+    def test_parse_close_command(self, processor):
         """
-        Тест разбора команды клика по координатам
+        Тест на распознавание команд закрытия
         """
-        command = "кликни 500 300"
-        result = self.processor.parse_command(command)
+        commands = [
+            "закрой текущее окно",
+            "выключи программу Excel",
+            "заверши работу приложения"
+        ]
         
-        self.assertEqual(result["action"], "click")
-        self.assertEqual(result["params"].get("numbers"), [500, 300])
+        for cmd in commands:
+            result = processor.parse_command(cmd)
+            assert result is not None
+            assert result["action"] == "close"
+            assert result["target"] is not None
+            assert isinstance(result["params"], dict)
     
-    def test_parse_type_command(self):
+    def test_parse_search_command(self, processor):
         """
-        Тест разбора команды ввода текста
+        Тест на распознавание команд поиска
         """
-        command = "напиши 'Привет, мир!'"
-        result = self.processor.parse_command(command)
+        # Команда с указанием места поиска
+        cmd = "найди в Google 'как обучить YOLO модель'"
+        result = processor.parse_command(cmd)
         
-        self.assertEqual(result["action"], "type")
-        self.assertEqual(result["params"].get("text"), "Привет, мир!")
+        assert result is not None
+        assert result["action"] == "search"
+        assert result["target"] == "google"
+        assert result["params"]["query"] == "как обучить YOLO модель"
+        
+        # Команда без указания места поиска
+        cmd = "поищи 'погода Москва'"
+        result = processor.parse_command(cmd)
+        
+        assert result is not None
+        assert result["action"] == "search"
+        assert result["target"] is None
+        assert result["params"]["query"] == "погода Москва"
     
-    def test_parse_simple_type_command(self):
+    def test_parse_scroll_command(self, processor):
         """
-        Тест разбора простой команды ввода текста без кавычек
+        Тест на распознавание команд прокрутки
         """
-        command = "введи example@mail.com"
-        result = self.processor.parse_command(command)
+        # Команда с указанием количества
+        cmd = "прокрути страницу вниз на 5"
+        result = processor.parse_command(cmd)
         
-        self.assertEqual(result["action"], "type")
-        self.assertEqual(result["params"].get("text"), "example@mail.com")
+        assert result is not None
+        assert result["action"] == "scroll"
+        assert result["target"] == "страницу"
+        assert result["params"]["direction"] == "down"
+        assert result["params"]["amount"] == 5
+        
+        # Команда без указания количества
+        cmd = "прокрути вверх"
+        result = processor.parse_command(cmd)
+        
+        assert result is not None
+        assert result["action"] == "scroll"
+        assert result["target"] is None
+        assert result["params"]["direction"] == "up"
+        assert result["params"]["amount"] == 1
     
-    def test_parse_create_command(self):
+    def test_parse_file_operations(self, processor):
         """
-        Тест разбора команды создания файла
+        Тест на распознавание команд для работы с файлами
         """
-        command = "создай файл test.txt"
-        result = self.processor.parse_command(command)
+        # Создание файла
+        cmd = "создай файл 'новый документ.txt'"
+        result = processor.parse_command(cmd)
         
-        self.assertEqual(result["action"], "create")
-        self.assertEqual(result["params"].get("file_name"), "test.txt")
+        assert result is not None
+        assert result["action"] == "create"
+        assert result["params"]["type"] == "файл"
+        assert result["params"]["path"] == "новый документ.txt"
+        
+        # Удаление файла
+        cmd = "удали файл 'ненужный файл.tmp'"
+        result = processor.parse_command(cmd)
+        
+        assert result is not None
+        assert result["action"] == "delete"
+        assert result["params"]["type"] == "файл"
+        assert result["params"]["path"] == "ненужный файл.tmp"
+        
+        # Перемещение файла
+        cmd = "перемести файл 'документ.docx' в 'Документы'"
+        result = processor.parse_command(cmd)
+        
+        assert result is not None
+        assert result["action"] == "move"
+        assert result["params"]["type"] == "файл"
+        assert result["params"]["source"] == "документ.docx"
+        assert result["params"]["destination"] == "Документы"
     
-    def test_parse_create_folder_command(self):
+    def test_unrecognized_command(self, processor):
         """
-        Тест разбора команды создания папки
+        Тест на неопознанные команды
         """
-        command = "создай папку Projects"
-        result = self.processor.parse_command(command)
+        commands = [
+            "",  # Пустая строка
+            "привет, как дела?",  # Не является командой
+            "123456",  # Только цифры
+            "!@#$%^&*()"  # Специальные символы
+        ]
         
-        self.assertEqual(result["action"], "create")
-        self.assertEqual(result["params"].get("folder_name"), "Projects")
+        for cmd in commands:
+            result = processor.parse_command(cmd)
+            assert result is None
     
-    def test_parse_delete_command(self):
+    def test_extract_keywords(self, processor):
         """
-        Тест разбора команды удаления файла
+        Тест на извлечение ключевых слов
         """
-        command = "удали файл temp.log"
-        result = self.processor.parse_command(command)
+        cmd = "открой файл в папке Документы на рабочем столе"
+        keywords = processor.extract_keywords(cmd)
         
-        self.assertEqual(result["action"], "delete")
-        self.assertEqual(result["params"].get("file_name"), "temp.log")
+        # Проверяем, что стоп-слова удалены и остались только ключевые слова
+        assert "открой" in keywords
+        assert "файл" in keywords
+        assert "папке" in keywords
+        assert "документы" in keywords
+        assert "рабочем" in keywords
+        assert "столе" in keywords
+        
+        # Проверяем, что стоп-слова удалены
+        assert "в" not in keywords
+        assert "на" not in keywords
     
-    def test_parse_close_command(self):
+    def test_suggest_command(self, processor):
         """
-        Тест разбора команды закрытия
+        Тест на предложение команд
         """
-        command = "закрой окно"
-        result = self.processor.parse_command(command)
+        # Тест на начало команды
+        suggestions = processor.suggest_command("открой")
+        assert "открой браузер Chrome" in suggestions
         
-        self.assertEqual(result["action"], "close")
-        self.assertEqual(result["target"], "окно")
-    
-    def test_parse_scroll_command(self):
-        """
-        Тест разбора команды прокрутки
-        """
-        command = "прокрути вниз"
-        result = self.processor.parse_command(command)
+        # Тест на ключевое слово
+        suggestions = processor.suggest_command("файл")
+        assert "создай файл 'новый документ.txt'" in suggestions
+        assert "удали файл 'ненужный файл.tmp'" in suggestions
+        assert "перемести файл 'документ.docx' в 'Документы'" in suggestions
         
-        self.assertEqual(result["action"], "scroll")
-        self.assertEqual(result["target"], "вниз")
-    
-    def test_parse_scroll_with_number_command(self):
-        """
-        Тест разбора команды прокрутки с числом
-        """
-        command = "прокрути на 5 строк вниз"
-        result = self.processor.parse_command(command)
-        
-        self.assertEqual(result["action"], "scroll")
-        self.assertEqual(result["params"].get("numbers"), [5])
-        self.assertIn("вниз", result["target"])
-    
-    def test_extract_entity(self):
-        """
-        Тест извлечения сущности из текста
-        """
-        text = "обработай документ report.docx на компьютере"
-        file_name = self.processor.extract_entity(text, "file")
-        
-        self.assertEqual(file_name, "report.docx")
-    
-    def test_extract_folder_entity(self):
-        """
-        Тест извлечения сущности папки
-        """
-        text = "перейди в папку Downloads на компьютере"
-        folder_name = self.processor.extract_entity(text, "folder")
-        
-        self.assertEqual(folder_name, "Downloads")
-    
-    def test_extract_app_entity(self):
-        """
-        Тест извлечения сущности приложения
-        """
-        text = "запусти программу Chrome и открой Google"
-        app_name = self.processor.extract_entity(text, "app")
-        
-        self.assertEqual(app_name, "Chrome")
-    
-    def test_unknown_command(self):
-        """
-        Тест обработки неизвестной команды
-        """
-        command = "сделай что-нибудь случайное"
-        result = self.processor.parse_command(command)
-        
-        self.assertIsNone(result)
-
-if __name__ == "__main__":
-    unittest.main() 
+        # Тест на несуществующую команду
+        suggestions = processor.suggest_command("небывалая команда")
+        assert len(suggestions) == 0 

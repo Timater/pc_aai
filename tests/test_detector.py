@@ -1,147 +1,237 @@
-import unittest
+"""
+Тесты для модуля детектора интерфейса
+"""
+
 import os
+import pytest
 import numpy as np
+import cv2
 from unittest.mock import patch, MagicMock
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Импортируем тестируемый модуль
 from src.detector import Detector
+from tests import MockDetector
 
-class TestDetector(unittest.TestCase):
+class TestDetector:
     """
-    Тесты для класса Detector
+    Набор тестов для проверки модуля Detector
     """
-    @patch('onnxruntime.InferenceSession')
-    def test_initialize_detector(self, mock_session):
+    
+    @pytest.fixture
+    def sample_image(self):
         """
-        Тест инициализации детектора
+        Создает тестовое изображение для тестирования детектора
         """
-        # Настройка мока
-        mock_session_instance = MagicMock()
+        # Создаем пустое изображение 640x480 со случайным заполнением
+        image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        
+        # Добавляем прямоугольники разных цветов для имитации UI элементов
+        # Кнопка (красный)
+        cv2.rectangle(image, (50, 50), (150, 100), (0, 0, 255), -1)
+        # Текстовое поле (зеленый)
+        cv2.rectangle(image, (200, 150), (400, 200), (0, 255, 0), -1)
+        # Чекбокс (синий)
+        cv2.rectangle(image, (50, 200), (80, 230), (255, 0, 0), -1)
+        
+        return image
+    
+    @pytest.fixture
+    def mock_session(self):
+        """
+        Создает мок для сессии ONNX Runtime
+        """
+        mock_session = MagicMock()
+        
+        # Настраиваем входные данные
         mock_input = MagicMock()
-        mock_input.name = "input"
-        mock_input.shape = [1, 3, 640, 640]
+        mock_input.name = "images"
+        mock_input.shape = [1, 3, 640, 640]  # NCHW формат
+        mock_session.get_inputs.return_value = [mock_input]
+        
+        # Настраиваем выходные данные
         mock_output = MagicMock()
         mock_output.name = "output"
+        mock_session.get_outputs.return_value = [mock_output]
         
-        mock_session_instance.get_inputs.return_value = [mock_input]
-        mock_session_instance.get_outputs.return_value = [mock_output]
-        mock_session.return_value = mock_session_instance
+        # Настраиваем результат инференса
+        # Имитируем формат: 1 пакет, 3 обнаружения, 6 значений (x, y, w, h, confidence, class)
+        # плюс confidence для каждого класса (предположим, есть 11 классов)
+        # [batch, objects, params]
+        mock_result = [np.array([[[
+            [100, 75, 100, 50, 0.95, 0, 0.95, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01],  # кнопка
+            [300, 175, 200, 50, 0.87, 1, 0.01, 0.87, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01],  # текстовое поле
+            [65, 215, 30, 30, 0.78, 2, 0.01, 0.01, 0.78, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01]    # чекбокс
+        ]])]
         
-        # Вызов тестируемого метода
-        detector = Detector("dummy_model.onnx")
+        mock_session.run.return_value = mock_result
         
-        # Проверки
-        self.assertEqual(detector.input_name, "input")
-        self.assertEqual(detector.input_shape, [1, 3, 640, 640])
-        self.assertEqual(detector.output_names, ["output"])
-        mock_session.assert_called_once_with("dummy_model.onnx")
+        return mock_session
+    
+    def test_detector_initialization_file_not_found(self):
+        """
+        Тест на инициализацию детектора с несуществующим файлом модели
+        """
+        # Используем заведомо несуществующий путь к файлу
+        non_existent_path = "non_existent_model.onnx"
+        
+        # Проверяем, что инициализация с несуществующим файлом вызывает исключение
+        with pytest.raises(FileNotFoundError):
+            Detector(non_existent_path)
     
     @patch('onnxruntime.InferenceSession')
-    def test_preprocess_image(self, mock_session):
+    @patch('os.path.exists')
+    def test_detector_initialization_success(self, mock_exists, mock_inference_session):
         """
-        Тест предобработки изображения
+        Тест на успешную инициализацию детектора
         """
-        # Настройка мока
-        mock_session_instance = MagicMock()
-        mock_input = MagicMock()
-        mock_input.name = "input"
-        mock_input.shape = [1, 3, 640, 640]
-        mock_session_instance.get_inputs.return_value = [mock_input]
-        mock_session_instance.get_outputs.return_value = [MagicMock()]
-        mock_session.return_value = mock_session_instance
+        # Настраиваем мок для проверки существования файла
+        mock_exists.return_value = True
         
-        # Создание детектора
-        detector = Detector("dummy_model.onnx")
+        # Настраиваем мок для сессии
+        mock_session = self.mock_session()
+        mock_inference_session.return_value = mock_session
         
-        # Создание тестового изображения (RGB)
-        test_image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        # Инициализируем детектор
+        detector = Detector("fake_model.onnx")
         
-        # Вызов тестируемого метода
-        processed_image = detector.preprocess_image(test_image)
-        
-        # Проверки
-        self.assertEqual(processed_image.shape, (1, 3, 640, 640))  # Батч, каналы, высота, ширина
-        self.assertEqual(processed_image.dtype, np.float32)  # Тип данных float32
-        self.assertTrue(np.all(processed_image >= 0.0) and np.all(processed_image <= 1.0))  # Нормализация [0,1]
+        # Проверяем, что атрибуты инициализированы правильно
+        assert detector.input_name == "images"
+        assert detector.input_width == 640
+        assert detector.input_height == 640
+        assert detector.confidence_threshold == 0.5
+        assert detector.session == mock_session
     
-    @patch('onnxruntime.InferenceSession')
-    def test_parse_outputs(self, mock_session):
+    def test_preprocess_image(self, sample_image):
         """
-        Тест обработки выходов модели
+        Тест на предобработку изображения
         """
-        # Настройка мока
-        mock_session_instance = MagicMock()
-        mock_input = MagicMock()
-        mock_input.name = "input"
-        mock_input.shape = [1, 3, 640, 640]
-        mock_session_instance.get_inputs.return_value = [mock_input]
-        mock_session_instance.get_outputs.return_value = [MagicMock()]
-        mock_session.return_value = mock_session_instance
+        # Инициализируем детектор с использованием патча
+        with patch('os.path.exists') as mock_exists, patch('onnxruntime.InferenceSession') as mock_inference_session:
+            mock_exists.return_value = True
+            mock_inference_session.return_value = self.mock_session()
+            
+            detector = Detector("fake_model.onnx")
         
-        # Создание детектора
-        detector = Detector("dummy_model.onnx")
+        # Выполняем предобработку изображения
+        preprocessed = detector.preprocess_image(sample_image)
         
-        # Создание примера выходных данных YOLO (1 батч, 3 детекции, формат [x1, y1, x2, y2, conf, class_id])
-        mock_output = np.array([
-            [  # batch
-                [  # detections
-                    [100, 100, 200, 200, 0.9, 0],  # bbox1: [x1, y1, x2, y2, confidence, class_id]
-                    [300, 300, 400, 400, 0.8, 1],  # bbox2
-                    [500, 100, 600, 200, 0.7, 2],  # bbox3
-                ]
-            ]
-        ])
-        
-        # Вызов тестируемого метода
-        original_width, original_height = 1920, 1080
-        detections = detector._parse_outputs([mock_output], original_width, original_height)
-        
-        # Проверки
-        self.assertEqual(len(detections), 3)  # Должно быть 3 детекции
-        
-        # Проверяем первую детекцию
-        self.assertEqual(detections[0]['x'], 100 * original_width // 640)
-        self.assertEqual(detections[0]['y'], 100 * original_height // 640)
-        self.assertEqual(detections[0]['width'], 100 * original_width // 640)  # 200-100=100
-        self.assertEqual(detections[0]['height'], 100 * original_height // 640)  # 200-100=100
-        self.assertEqual(detections[0]['confidence'], 0.9)
-        self.assertEqual(detections[0]['class_id'], 0)
+        # Проверяем размерность и тип выходных данных
+        assert preprocessed.shape == (1, 3, 640, 640)  # NCHW формат с размером пакета
+        assert preprocessed.dtype == np.float32
+        assert np.max(preprocessed) <= 1.0  # Проверяем нормализацию
+        assert np.min(preprocessed) >= 0.0
     
-    @patch('onnxruntime.InferenceSession')
-    def test_detect_elements_with_class_names(self, mock_session):
+    def test_post_process(self, sample_image):
         """
-        Тест распознавания элементов с именами классов
+        Тест на постобработку результатов инференса
         """
-        # Настройка мока
-        mock_session_instance = MagicMock()
-        mock_input = MagicMock()
-        mock_input.name = "input"
-        mock_input.shape = [1, 3, 640, 640]
-        mock_session_instance.get_inputs.return_value = [mock_input]
-        mock_session_instance.get_outputs.return_value = [MagicMock()]
-        mock_session.return_value = mock_session_instance
+        # Инициализируем детектор с использованием патча
+        with patch('os.path.exists') as mock_exists, patch('onnxruntime.InferenceSession') as mock_inference_session:
+            mock_exists.return_value = True
+            mock_inference_session.return_value = self.mock_session()
+            
+            detector = Detector("fake_model.onnx")
         
-        # Создание детектора
-        detector = Detector("dummy_model.onnx")
+        # Создаем тестовые выходные данные модели
+        # Имитируем формат: batch, objects, params
+        test_outputs = [np.array([[[
+            100, 75, 100, 50, 0.95, 0, 0.95, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01  # кнопка
+        ]]])]
         
-        # Мокаем метод predict, чтобы вернуть предопределенные объекты
-        detector.predict = MagicMock(return_value=[
-            {'x': 100, 'y': 100, 'width': 100, 'height': 50, 'confidence': 0.9, 'class_id': 0},
-            {'x': 300, 'y': 200, 'width': 80, 'height': 30, 'confidence': 0.8, 'class_id': 1}
-        ])
+        # Список имен классов
+        class_names = ["button", "text_field", "checkbox", "radio", "dropdown", 
+                      "menu", "icon", "tab", "scrollbar", "window", "dialog"]
         
-        # Создание тестового изображения
-        test_image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+        # Выполняем постобработку
+        detections = detector.post_process(test_outputs, sample_image, class_names)
         
-        # Вызов тестируемого метода с классами
-        class_names = ["button", "text_field"]
-        elements = detector.detect_elements(test_image, class_names)
+        # Проверяем результаты
+        assert len(detections) == 1
+        detection = detections[0]
         
-        # Проверки
-        self.assertEqual(len(elements), 2)
-        self.assertEqual(elements[0]['label'], "button")
-        self.assertEqual(elements[1]['label'], "text_field")
-
-if __name__ == "__main__":
-    unittest.main() 
+        assert detection["class_id"] == 0
+        assert detection["class_name"] == "button"
+        assert detection["confidence"] == pytest.approx(0.95, 0.01)
+        assert "box" in detection
+        assert "width" in detection
+        assert "height" in detection
+        assert "center_x" in detection
+        assert "center_y" in detection
+    
+    def test_detect_elements(self, sample_image):
+        """
+        Тест на полную работу метода обнаружения элементов
+        """
+        # Инициализируем детектор с использованием патча
+        with patch('os.path.exists') as mock_exists, patch('onnxruntime.InferenceSession') as mock_inference_session:
+            mock_exists.return_value = True
+            mock_session = self.mock_session()
+            mock_inference_session.return_value = mock_session
+            
+            detector = Detector("fake_model.onnx")
+        
+        # Список имен классов
+        class_names = ["button", "text_field", "checkbox", "radio", "dropdown", 
+                      "menu", "icon", "tab", "scrollbar", "window", "dialog"]
+        
+        # Выполняем обнаружение элементов
+        elements = detector.detect_elements(sample_image, class_names)
+        
+        # Проверяем результаты
+        assert len(elements) == 3  # Три элемента, как настроено в mock_session
+        
+        # Проверяем первый элемент
+        assert elements[0]["class_id"] == 0
+        assert elements[0]["class_name"] == "button"
+        assert elements[0]["confidence"] > 0.9
+        
+        # Проверяем второй элемент
+        assert elements[1]["class_id"] == 1
+        assert elements[1]["class_name"] == "text_field"
+        assert elements[1]["confidence"] > 0.8
+        
+        # Проверяем третий элемент
+        assert elements[2]["class_id"] == 2
+        assert elements[2]["class_name"] == "checkbox"
+        assert elements[2]["confidence"] > 0.7
+    
+    def test_mock_detector(self, sample_image):
+        """
+        Тест на работу MockDetector
+        """
+        # Инициализируем мок-детектор
+        mock_detector = MockDetector()
+        
+        # Список имен классов
+        class_names = ["button", "text_field", "checkbox", "radio", "dropdown", 
+                      "menu", "icon", "tab", "scrollbar", "window", "dialog"]
+        
+        # Выполняем обнаружение элементов
+        elements = mock_detector.detect_elements(sample_image, class_names)
+        
+        # Проверяем результаты
+        assert len(elements) >= 3  # MockDetector генерирует от 3 до 7 элементов
+        assert len(elements) <= 7
+        
+        # Проверяем структуру элементов
+        for element in elements:
+            assert "class_id" in element
+            assert "class_name" in element
+            assert "confidence" in element
+            assert "box" in element
+            assert "width" in element
+            assert "height" in element
+            assert "center_x" in element
+            assert "center_y" in element
+            
+            # Проверяем типы данных
+            assert isinstance(element["class_id"], int)
+            assert isinstance(element["class_name"], str)
+            assert isinstance(element["confidence"], float)
+            assert isinstance(element["box"], list)
+            assert len(element["box"]) == 4  # x1, y1, x2, y2
+            
+            # Проверяем диапазоны
+            assert 0 <= element["class_id"] < len(class_names)
+            assert element["class_name"] in class_names
+            assert 0.5 <= element["confidence"] <= 1.0 
