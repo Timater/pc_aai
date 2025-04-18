@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Logs
+logs/
+*.log
+
+# Модели
+*.onnx
+*.weights
+*.pt
+
+# Виртуальное окружение
+venv/
+env/
+.env/
+
+# PyCharm и другие IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Кэш и временные файлы
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Пользовательские файлы
+test_files/
+error_screenshots/ 
