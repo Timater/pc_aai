@@ -7,8 +7,8 @@ from datetime import datetime
 
 # Импортируем модули нашей системы
 from src.detector import Detector
+from src.nlp import CommandProcessor
 from actions import ActionManager
-from nlp_processor import CommandProcessor
 from file_manager import FileManager
 from logger import Logger
 
@@ -16,7 +16,7 @@ class PCAgent:
     """
     Основной класс агента для управления ПК
     """
-    def __init__(self, model_path="detector.onnx", class_names=None):
+    def __init__(self, model_path="models/detector.onnx", class_names=None):
         """
         Инициализация агента
         
@@ -198,7 +198,9 @@ class PCAgent:
         label = label.lower()
         
         for element in elements:
-            if 'label' in element and element['label'].lower() in label or label in element['label'].lower():
+            element_label = element.get("class_name", "").lower()
+            # Проверяем, содержит ли метка элемента искомую строку
+            if label in element_label:
                 return element
         
         return None
@@ -209,31 +211,28 @@ class PCAgent:
         
         Args:
             elements (list): Список элементов интерфейса
-            target (str): Цель действия
+            target (str): Целевой элемент
             params (dict): Дополнительные параметры
             
         Returns:
-            dict: Результат выполнения
+            dict: Результат выполнения действия
         """
-        # Найти элемент для клика
+        if not target:
+            return {"status": "error", "message": "Не указана цель для клика"}
+        
+        # Поиск элемента по названию
         element = self._find_element_by_label(elements, target)
         
         if element:
-            # Вычисляем координаты центра элемента
-            x = element['x'] + element['width'] // 2
-            y = element['y'] + element['height'] // 2
+            # Получаем координаты центра элемента
+            x = element["center_x"]
+            y = element["center_y"]
             
             # Выполняем клик
             self.action_manager.click(x, y)
-            return {"status": "success", "message": f"Клик выполнен по элементу {element['label']}"}
+            return {"status": "success", "message": f"Выполнен клик по элементу '{target}' в координатах ({x}, {y})"}
         else:
-            # Если элемент не найден, пробуем извлечь координаты из параметров
-            if 'numbers' in params and len(params['numbers']) >= 2:
-                x, y = params['numbers'][0], params['numbers'][1]
-                self.action_manager.click(x, y)
-                return {"status": "success", "message": f"Клик выполнен по координатам ({x}, {y})"}
-            
-            return {"status": "error", "message": f"Элемент для клика не найден: {target}"}
+            return {"status": "error", "message": f"Элемент '{target}' не найден на экране"}
     
     def _handle_type_action(self, elements, target, params):
         """
@@ -241,84 +240,100 @@ class PCAgent:
         
         Args:
             elements (list): Список элементов интерфейса
-            target (str): Цель действия
+            target (str): Целевой элемент
             params (dict): Дополнительные параметры
             
         Returns:
-            dict: Результат выполнения
+            dict: Результат выполнения действия
         """
-        # Получаем текст для ввода
-        text = params.get('text', target)
+        text = params.get("text")
         
         if not text:
             return {"status": "error", "message": "Не указан текст для ввода"}
         
-        # Находим текстовое поле, если оно указано
-        text_field = None
-        for element in elements:
-            if 'label' in element and element['label'] == 'text_field':
-                text_field = element
-                break
-        
-        # Если нашли поле, кликаем по нему перед вводом
-        if text_field:
-            x = text_field['x'] + text_field['width'] // 2
-            y = text_field['y'] + text_field['height'] // 2
-            self.action_manager.click(x, y)
+        # Если указана цель для ввода текста, сначала кликаем по ней
+        if target:
+            element = self._find_element_by_label(elements, target)
+            
+            if element:
+                # Получаем координаты центра элемента
+                x = element["center_x"]
+                y = element["center_y"]
+                
+                # Выполняем клик
+                self.action_manager.click(x, y)
+            else:
+                return {"status": "error", "message": f"Элемент '{target}' не найден на экране"}
         
         # Вводим текст
         self.action_manager.type_text(text)
         
-        return {"status": "success", "message": f"Текст '{text}' введен"}
+        if target:
+            return {"status": "success", "message": f"Введен текст '{text}' в элемент '{target}'"}
+        else:
+            return {"status": "success", "message": f"Введен текст '{text}'"}
     
     def _handle_open_action(self, elements, target, params):
         """
-        Обработка действия открытия файла или приложения
+        Обработка действия открытия
         
         Args:
             elements (list): Список элементов интерфейса
-            target (str): Цель действия
+            target (str): Целевой элемент
             params (dict): Дополнительные параметры
             
         Returns:
-            dict: Результат выполнения
+            dict: Результат выполнения действия
         """
-        app_name = params.get('app_name')
-        file_name = params.get('file_name')
+        if not target:
+            return {"status": "error", "message": "Не указана цель для открытия"}
         
-        if file_name:
-            # Поиск файла
-            file_path = self.file_manager.find_file(file_name)
-            if file_path:
-                # Имитируем открытие файла через двойной клик
-                # На самом деле, нужно использовать соответствующие команды системы
-                import subprocess
+        # Проверяем, является ли цель программой
+        common_apps = {
+            "браузер": "chrome.exe",
+            "блокнот": "notepad.exe",
+            "калькулятор": "calc.exe",
+            "проводник": "explorer.exe",
+            "chrome": "chrome.exe",
+            "firefox": "firefox.exe",
+            "word": "WINWORD.EXE",
+            "excel": "EXCEL.EXE"
+        }
+        
+        # Проверяем, является ли целью одно из известных приложений
+        for app_name, app_exe in common_apps.items():
+            if app_name in target.lower():
                 try:
-                    subprocess.Popen(['start', file_path], shell=True)
-                    return {"status": "success", "message": f"Файл {file_name} открыт"}
+                    # Запускаем программу
+                    import subprocess
+                    subprocess.Popen(app_exe)
+                    return {"status": "success", "message": f"Запущено приложение '{app_exe}'"}
                 except Exception as e:
-                    return {"status": "error", "message": f"Ошибка при открытии файла: {str(e)}"}
-            else:
-                return {"status": "error", "message": f"Файл {file_name} не найден"}
+                    return {"status": "error", "message": f"Ошибка при запуске приложения '{app_exe}': {str(e)}"}
         
-        elif app_name:
-            # Запуск приложения
-            try:
-                # На Windows можно использовать команду start
-                subprocess.Popen(['start', app_name], shell=True)
-                return {"status": "success", "message": f"Приложение {app_name} запущено"}
-            except Exception as e:
-                return {"status": "error", "message": f"Ошибка при запуске приложения: {str(e)}"}
-        
-        # Если не указан ни файл, ни приложение, ищем интерфейсный элемент
+        # Если не является программой, пробуем найти элемент на экране
         element = self._find_element_by_label(elements, target)
-        if element:
-            x = element['x'] + element['width'] // 2
-            y = element['y'] + element['height'] // 2
-            self.action_manager.double_click(x, y)
-            return {"status": "success", "message": f"Элемент {element['label']} открыт"}
         
-        return {"status": "error", "message": "Не указана цель для открытия"}
+        if element:
+            # Получаем координаты центра элемента
+            x = element["center_x"]
+            y = element["center_y"]
+            
+            # Выполняем клик
+            self.action_manager.click(x, y)
+            return {"status": "success", "message": f"Выполнен клик по элементу '{target}' для открытия"}
+        
+        # Проверяем, является ли целью файл или папка
+        if os.path.exists(target):
+            try:
+                # Открываем файл или папку
+                import subprocess
+                subprocess.Popen(["explorer", target])
+                return {"status": "success", "message": f"Открыт файл или папка '{target}'"}
+            except Exception as e:
+                return {"status": "error", "message": f"Ошибка при открытии файла или папки '{target}': {str(e)}"}
+        
+        return {"status": "error", "message": f"Не удалось открыть '{target}'"}
     
     def _handle_close_action(self, elements, target, params):
         """
@@ -326,35 +341,48 @@ class PCAgent:
         
         Args:
             elements (list): Список элементов интерфейса
-            target (str): Цель действия
+            target (str): Целевой элемент
             params (dict): Дополнительные параметры
             
         Returns:
-            dict: Результат выполнения
+            dict: Результат выполнения действия
         """
-        # Поиск кнопки закрытия
-        close_button = None
+        if not target:
+            # Если цель не указана, пробуем найти кнопку закрытия окна
+            close_buttons = []
+            for element in elements:
+                if element.get("class_name", "").lower() in ["close", "закрыть", "крестик", "×", "x"]:
+                    close_buttons.append(element)
+            
+            if close_buttons:
+                # Выбираем кнопку с наибольшей уверенностью
+                close_button = max(close_buttons, key=lambda x: x.get("confidence", 0))
+                
+                # Получаем координаты центра элемента
+                x = close_button["center_x"]
+                y = close_button["center_y"]
+                
+                # Выполняем клик
+                self.action_manager.click(x, y)
+                return {"status": "success", "message": "Выполнен клик по кнопке закрытия"}
+            
+            # Если не нашли кнопку закрытия, отправляем Alt+F4
+            self.action_manager.press_key_combination(["alt", "f4"])
+            return {"status": "success", "message": "Отправлена комбинация клавиш Alt+F4"}
         
-        # Сначала ищем конкретную кнопку закрытия
-        for element in elements:
-            if 'label' in element and (element['label'] == 'close_button' or 'close' in element['label'].lower()):
-                close_button = element
-                break
+        # Если указана цель, ищем элемент на экране
+        element = self._find_element_by_label(elements, target)
         
-        # Если не нашли, ищем по обычной метке
-        if close_button is None:
-            close_button = self._find_element_by_label(elements, target)
-        
-        # Если нашли кнопку, кликаем по ней
-        if close_button:
-            x = close_button['x'] + close_button['width'] // 2
-            y = close_button['y'] + close_button['height'] // 2
+        if element:
+            # Получаем координаты центра элемента
+            x = element["center_x"]
+            y = element["center_y"]
+            
+            # Выполняем клик
             self.action_manager.click(x, y)
-            return {"status": "success", "message": f"Элемент {close_button.get('label', 'окно')} закрыт"}
+            return {"status": "success", "message": f"Выполнен клик по элементу '{target}' для закрытия"}
         
-        # Если не нашли кнопку, пробуем использовать сочетание клавиш Alt+F4
-        self.action_manager.hotkey('alt', 'f4')
-        return {"status": "success", "message": "Выполнена комбинация клавиш Alt+F4"}
+        return {"status": "error", "message": f"Не удалось закрыть '{target}'"}
     
     def _handle_search_action(self, elements, target, params):
         """
@@ -362,39 +390,58 @@ class PCAgent:
         
         Args:
             elements (list): Список элементов интерфейса
-            target (str): Цель действия
+            target (str): Место поиска
             params (dict): Дополнительные параметры
             
         Returns:
-            dict: Результат выполнения
+            dict: Результат выполнения действия
         """
-        file_name = params.get('file_name')
-        folder_name = params.get('folder_name')
+        query = params.get("query")
         
-        if file_name:
-            # Поиск файла
-            file_path = self.file_manager.find_file(file_name)
-            if file_path:
-                return {"status": "success", "message": f"Файл найден: {file_path}"}
-            else:
-                return {"status": "error", "message": f"Файл {file_name} не найден"}
+        if not query:
+            return {"status": "error", "message": "Не указан запрос для поиска"}
         
-        elif folder_name:
-            # В реальной системе здесь был бы поиск папки
-            return {"status": "error", "message": "Поиск папок пока не реализован"}
-        
-        elif target:
-            # Поиск элемента интерфейса
+        # Если указано место поиска, сначала кликаем по соответствующему элементу
+        if target:
             element = self._find_element_by_label(elements, target)
+            
             if element:
-                return {
-                    "status": "success", 
-                    "message": f"Элемент {element['label']} найден в позиции ({element['x']}, {element['y']})"
-                }
+                # Получаем координаты центра элемента
+                x = element["center_x"]
+                y = element["center_y"]
+                
+                # Выполняем клик
+                self.action_manager.click(x, y)
             else:
-                return {"status": "error", "message": f"Элемент {target} не найден"}
+                # Если не нашли указанный элемент, ищем поле поиска
+                search_elements = []
+                for element in elements:
+                    if element.get("class_name", "").lower() in ["search", "поиск", "найти", "text_field"]:
+                        search_elements.append(element)
+                
+                if search_elements:
+                    # Выбираем элемент с наибольшей уверенностью
+                    search_element = max(search_elements, key=lambda x: x.get("confidence", 0))
+                    
+                    # Получаем координаты центра элемента
+                    x = search_element["center_x"]
+                    y = search_element["center_y"]
+                    
+                    # Выполняем клик
+                    self.action_manager.click(x, y)
+                else:
+                    return {"status": "error", "message": f"Не найдено поле поиска для '{target}'"}
         
-        return {"status": "error", "message": "Не указана цель для поиска"}
+        # Вводим запрос
+        self.action_manager.type_text(query)
+        
+        # Нажимаем Enter для выполнения поиска
+        self.action_manager.press_key("enter")
+        
+        if target:
+            return {"status": "success", "message": f"Выполнен поиск '{query}' в '{target}'"}
+        else:
+            return {"status": "success", "message": f"Выполнен поиск '{query}'"}
     
     def _handle_create_action(self, params):
         """
@@ -404,32 +451,31 @@ class PCAgent:
             params (dict): Параметры действия
             
         Returns:
-            dict: Результат выполнения
+            dict: Результат выполнения действия
         """
-        file_name = params.get('file_name')
-        folder_name = params.get('folder_name')
+        item_type = params.get("type")
+        path = params.get("path")
         
-        if file_name:
-            # Создание файла
-            desktop_path = self.file_manager.get_default_path("desktop")
-            file_path = os.path.join(desktop_path, file_name)
-            
-            if self.file_manager.create_file(file_path):
-                return {"status": "success", "message": f"Файл {file_name} создан на рабочем столе"}
+        if not item_type or not path:
+            return {"status": "error", "message": "Не указан тип или путь для создания"}
+        
+        try:
+            if item_type.lower() in ["file", "файл"]:
+                result = self.file_manager.create_file(path)
+                if result:
+                    return {"status": "success", "message": f"Создан файл '{path}'"}
+                else:
+                    return {"status": "error", "message": f"Не удалось создать файл '{path}'"}
+            elif item_type.lower() in ["folder", "directory", "папка", "директория"]:
+                result = self.file_manager.create_directory(path)
+                if result:
+                    return {"status": "success", "message": f"Создана папка '{path}'"}
+                else:
+                    return {"status": "error", "message": f"Не удалось создать папку '{path}'"}
             else:
-                return {"status": "error", "message": f"Ошибка при создании файла {file_name}"}
-        
-        elif folder_name:
-            # Создание папки
-            desktop_path = self.file_manager.get_default_path("desktop")
-            folder_path = os.path.join(desktop_path, folder_name)
-            
-            if self.file_manager.create_folder(folder_path):
-                return {"status": "success", "message": f"Папка {folder_name} создана на рабочем столе"}
-            else:
-                return {"status": "error", "message": f"Ошибка при создании папки {folder_name}"}
-        
-        return {"status": "error", "message": "Не указано что создавать (файл или папку)"}
+                return {"status": "error", "message": f"Неизвестный тип '{item_type}' для создания"}
+        except Exception as e:
+            return {"status": "error", "message": f"Ошибка при создании '{path}': {str(e)}"}
     
     def _handle_delete_action(self, params):
         """
@@ -439,56 +485,71 @@ class PCAgent:
             params (dict): Параметры действия
             
         Returns:
-            dict: Результат выполнения
+            dict: Результат выполнения действия
         """
-        file_name = params.get('file_name')
-        folder_name = params.get('folder_name')
+        item_type = params.get("type")
+        path = params.get("path")
         
-        if file_name:
-            # Поиск и удаление файла
-            desktop_path = self.file_manager.get_default_path("desktop")
-            file_path = os.path.join(desktop_path, file_name)
-            
-            if os.path.exists(file_path):
-                if self.file_manager.delete_file(file_path):
-                    return {"status": "success", "message": f"Файл {file_name} удален"}
+        if not path:
+            return {"status": "error", "message": "Не указан путь для удаления"}
+        
+        try:
+            if item_type.lower() in ["file", "файл"]:
+                result = self.file_manager.delete_file(path)
+                if result:
+                    return {"status": "success", "message": f"Удален файл '{path}'"}
                 else:
-                    return {"status": "error", "message": f"Ошибка при удалении файла {file_name}"}
+                    return {"status": "error", "message": f"Не удалось удалить файл '{path}'"}
+            elif item_type.lower() in ["folder", "directory", "папка", "директория"]:
+                result = self.file_manager.delete_directory(path)
+                if result:
+                    return {"status": "success", "message": f"Удалена папка '{path}'"}
+                else:
+                    return {"status": "error", "message": f"Не удалось удалить папку '{path}'"}
             else:
-                # Поиск файла в других папках
-                file_path = self.file_manager.find_file(file_name)
-                if file_path and self.file_manager.delete_file(file_path):
-                    return {"status": "success", "message": f"Файл {file_name} найден и удален"}
+                # Если тип не указан, пробуем удалить и файл, и папку
+                if os.path.isfile(path):
+                    result = self.file_manager.delete_file(path)
+                    if result:
+                        return {"status": "success", "message": f"Удален файл '{path}'"}
+                    else:
+                        return {"status": "error", "message": f"Не удалось удалить файл '{path}'"}
+                elif os.path.isdir(path):
+                    result = self.file_manager.delete_directory(path)
+                    if result:
+                        return {"status": "success", "message": f"Удалена папка '{path}'"}
+                    else:
+                        return {"status": "error", "message": f"Не удалось удалить папку '{path}'"}
                 else:
-                    return {"status": "error", "message": f"Файл {file_name} не найден"}
-        
-        elif folder_name:
-            # Удаление папки
-            desktop_path = self.file_manager.get_default_path("desktop")
-            folder_path = os.path.join(desktop_path, folder_name)
-            
-            if os.path.exists(folder_path):
-                if self.file_manager.delete_folder(folder_path):
-                    return {"status": "success", "message": f"Папка {folder_name} удалена"}
-                else:
-                    return {"status": "error", "message": f"Ошибка при удалении папки {folder_name}"}
-            else:
-                return {"status": "error", "message": f"Папка {folder_name} не найдена"}
-        
-        return {"status": "error", "message": "Не указано что удалять (файл или папку)"}
+                    return {"status": "error", "message": f"Не найден файл или папка '{path}'"}
+        except Exception as e:
+            return {"status": "error", "message": f"Ошибка при удалении '{path}': {str(e)}"}
     
     def _handle_move_action(self, params):
         """
-        Обработка действия перемещения файла
+        Обработка действия перемещения файла или папки
         
         Args:
             params (dict): Параметры действия
             
         Returns:
-            dict: Результат выполнения
+            dict: Результат выполнения действия
         """
-        # В реальной системе здесь был бы код для перемещения файлов
-        return {"status": "error", "message": "Действие перемещения пока не реализовано"}
+        item_type = params.get("type")
+        source = params.get("source")
+        destination = params.get("destination")
+        
+        if not source or not destination:
+            return {"status": "error", "message": "Не указан исходный или целевой путь для перемещения"}
+        
+        try:
+            result = self.file_manager.move(source, destination)
+            if result:
+                return {"status": "success", "message": f"Перемещено из '{source}' в '{destination}'"}
+            else:
+                return {"status": "error", "message": f"Не удалось переместить из '{source}' в '{destination}'"}
+        except Exception as e:
+            return {"status": "error", "message": f"Ошибка при перемещении из '{source}' в '{destination}': {str(e)}"}
     
     def _handle_scroll_action(self, elements, target, params):
         """
@@ -496,99 +557,97 @@ class PCAgent:
         
         Args:
             elements (list): Список элементов интерфейса
-            target (str): Цель действия
+            target (str): Целевой элемент
             params (dict): Дополнительные параметры
             
         Returns:
-            dict: Результат выполнения
+            dict: Результат выполнения действия
         """
-        # Получаем количество щелчков колеса мыши
-        clicks = -5  # По умолчанию прокручиваем вниз
+        direction = params.get("direction", "down")
+        amount = params.get("amount", 1)
         
-        if 'numbers' in params and params['numbers']:
-            clicks = params['numbers'][0]
-            # Если указано отрицательное число, то прокручиваем вверх
-            if target and ('вверх' in target.lower() or 'наверх' in target.lower()):
-                clicks = abs(clicks)
+        # Если указана цель, сначала кликаем по соответствующему элементу
+        if target:
+            element = self._find_element_by_label(elements, target)
+            
+            if element:
+                # Получаем координаты центра элемента
+                x = element["center_x"]
+                y = element["center_y"]
+                
+                # Выполняем клик
+                self.action_manager.click(x, y)
             else:
-                clicks = -abs(clicks)
-        elif target:
-            if 'вверх' in target.lower() or 'наверх' in target.lower():
-                clicks = 5
-            elif 'вниз' in target.lower():
-                clicks = -5
+                return {"status": "error", "message": f"Элемент '{target}' не найден на экране"}
         
         # Выполняем прокрутку
-        self.action_manager.scroll(clicks)
-        direction = "вверх" if clicks > 0 else "вниз"
-        return {"status": "success", "message": f"Выполнена прокрутка {direction} на {abs(clicks)} щелчков"}
+        self.action_manager.scroll(direction, amount)
+        
+        if target:
+            return {"status": "success", "message": f"Выполнена прокрутка {direction} на {amount} для элемента '{target}'"}
+        else:
+            return {"status": "success", "message": f"Выполнена прокрутка {direction} на {amount}"}
     
     def run_console(self):
         """
-        Запуск консольного интерфейса для ввода команд
+        Запуск консольного интерфейса
         """
         print("Запуск консольного интерфейса ПК-агента.")
-        print("Для выхода введите 'выход' или 'exit'.")
+        print("Введите команду:")
         
         while True:
             try:
-                command = input("\nВведите команду: ")
+                command = input("> ")
                 
-                if command.lower() in ['выход', 'exit', 'quit']:
-                    print("Завершение работы агента.")
+                if command.lower() in ["exit", "quit", "выход", "выйти", "стоп", "закрыть"]:
+                    print("Завершение работы.")
                     break
                 
-                # Обработка команды
+                if not command:
+                    continue
+                
                 result = self.process_command(command)
                 
-                # Вывод результата
-                if result.get('status') == 'success':
-                    print(f"✅ {result.get('message')}")
+                if result["status"] == "success":
+                    print(f"✅ {result['message']}")
                 else:
-                    print(f"❌ {result.get('message')}")
-                    
+                    print(f"❌ {result['message']}")
+                
             except KeyboardInterrupt:
-                print("\nПолучен сигнал прерывания. Завершение работы агента.")
+                print("\nПрервано пользователем. Завершение работы.")
                 break
             except Exception as e:
-                self.logger.error(f"Ошибка в консольном интерфейсе: {str(e)}")
                 print(f"❌ Произошла ошибка: {str(e)}")
+
 
 def parse_arguments():
     """
-    Разбор аргументов командной строки
+    Парсинг аргументов командной строки
     
     Returns:
-        argparse.Namespace: Объект с аргументами
+        argparse.Namespace: Аргументы командной строки
     """
-    parser = argparse.ArgumentParser(description='ПК-агент для управления интерфейсом')
-    parser.add_argument('--model', type=str, default='detector.onnx',
-                        help='Путь к ONNX-модели детектора')
-    parser.add_argument('--mode', type=str, choices=['console', 'test'], default='console',
-                        help='Режим работы: console - консольный интерфейс, test - запуск тестов')
+    parser = argparse.ArgumentParser(description="ПК-агент - система для управления ПК с помощью компьютерного зрения и NLP")
+    parser.add_argument("--model_path", type=str, default="models/detector.onnx", help="Путь к файлу модели")
+    parser.add_argument("--log_dir", type=str, default="logs", help="Директория для сохранения логов")
     
     return parser.parse_args()
 
+
 def main():
     """
-    Основная функция запуска приложения
+    Основная функция
     """
     args = parse_arguments()
     
-    if args.mode == 'test':
-        print("Запуск тестов системы...")
-        from tests import run_tests
-        run_tests()
-    else:
-        # Создание и запуск агента
-        try:
-            agent = PCAgent(model_path=args.model)
-            agent.run_console()
-        except Exception as e:
-            print(f"Критическая ошибка: {str(e)}")
-            return 1
-    
-    return 0
+    try:
+        agent = PCAgent(model_path=args.model_path)
+        agent.run_console()
+    except Exception as e:
+        print(f"Критическая ошибка: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
 
 if __name__ == "__main__":
     main() 
